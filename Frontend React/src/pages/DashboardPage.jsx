@@ -1,15 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './DashboardPage.css';
 
 const API_BASE = 'http://localhost:3000/api/auth';
+const RESUME_API = 'http://localhost:3000/api/resume';
+const REPORT_API = 'http://localhost:3000/api/report';
 
 function DashboardPage() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [resumes, setResumes] = useState([]); // Initially empty
+  const [resumes, setResumes] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef(null);
 
   // Fetch logged-in user on mount
   useEffect(() => {
@@ -31,6 +37,33 @@ function DashboardPage() {
     fetchUser();
   }, [navigate]);
 
+  // Load resumes and reports from API once user is available
+  useEffect(() => {
+    if (!user) return;
+
+    async function fetchData() {
+      try {
+        const [resumeRes, reportRes] = await Promise.all([
+          fetch(`${RESUME_API}/user`, { credentials: 'include' }),
+          fetch(`${REPORT_API}/user`, { credentials: 'include' }),
+        ]);
+
+        if (resumeRes.ok) {
+          const resumeData = await resumeRes.json();
+          setResumes(resumeData.resumes);
+        }
+
+        if (reportRes.ok) {
+          const reportData = await reportRes.json();
+          setReports(reportData.reports);
+        }
+      } catch {
+        /* silently fail — user still sees dashboard */
+      }
+    }
+    fetchData();
+  }, [user]);
+
   async function handleLogout() {
     setLoggingOut(true);
     try {
@@ -43,6 +76,52 @@ function DashboardPage() {
     navigate('/auth', { replace: true });
   }
 
+  function triggerFileInput() {
+    setUploadError('');
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    e.target.value = '';
+
+    if (file.type !== 'application/pdf') {
+      setUploadError('Only PDF files are allowed.');
+      return;
+    }
+
+    setUploading(true);
+    setUploadError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('resume', file);
+
+      const res = await fetch(`${RESUME_API}/upload`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setUploadError(data.message || 'Upload failed.');
+        return;
+      }
+
+      // Prepend the new resume and navigate to analyze
+      setResumes((prev) => [data.resume, ...prev]);
+      navigate(`/analyze/${data.resume._id}`);
+    } catch {
+      setUploadError('Network error — could not upload resume.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   function getInitials(name) {
     if (!name) return '?';
     return name
@@ -50,6 +129,17 @@ function DashboardPage() {
       .map((w) => w[0])
       .join('')
       .slice(0, 2);
+  }
+
+  function getScoreColor(score) {
+    if (score >= 70) return '#51cf66';
+    if (score >= 40) return '#ffbe0b';
+    return '#ff6b6b';
+  }
+
+  function truncate(text, max = 80) {
+    if (!text) return '';
+    return text.length > max ? text.slice(0, max) + '…' : text;
   }
 
   if (!user) {
@@ -153,6 +243,16 @@ function DashboardPage() {
                   <div className="info-value">{resumes.length}</div>
                 </div>
               </div>
+
+              <div className="dash-sidebar-info-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+                <div>
+                  <div className="info-label">Reports Generated</div>
+                  <div className="info-value">{reports.length}</div>
+                </div>
+              </div>
             </div>
 
             <div className="dash-sidebar-footer">
@@ -176,19 +276,49 @@ function DashboardPage() {
 
       {/* ─── Main Content ─── */}
       <main className="dash-content">
+        {/* Hidden file input */}
+        <input
+          type="file"
+          accept="application/pdf"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+
         <div className="dash-welcome">
           <h1>Welcome, {user.username} 👋</h1>
           <p>Upload your resume to get AI-powered insights and analysis.</p>
         </div>
 
+        {uploadError && (
+          <div className="dash-upload-error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+            {uploadError}
+          </div>
+        )}
+
+        {/* ── Your Resumes ── */}
         <div className="dash-section-header">
           <h2>Your Resumes</h2>
-          <button id="btn-upload-resume" className="dash-upload-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Upload Resume
+          <button
+            id="btn-upload-resume"
+            className="dash-upload-btn"
+            onClick={triggerFileInput}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <span className="spinner" style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            )}
+            {uploading ? 'Uploading…' : 'Upload Resume'}
           </button>
         </div>
 
@@ -211,17 +341,33 @@ function DashboardPage() {
               </div>
               <h3>No resumes yet</h3>
               <p>Upload your first resume to get started with AI-powered analysis and feedback.</p>
-              <button id="btn-upload-resume-empty" className="dash-empty-upload-btn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                Upload Resume to Analyze
+              <button
+                id="btn-upload-resume-empty"
+                className="dash-empty-upload-btn"
+                onClick={triggerFileInput}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <span className="spinner" style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                )}
+                {uploading ? 'Uploading…' : 'Upload Resume to Analyze'}
               </button>
             </div>
           ) : (
-            resumes.map((r, i) => (
-              <div key={i} className="dash-resume-card">
+            resumes.map((r) => (
+              <div
+                key={r._id}
+                className="dash-resume-card"
+                onClick={() => navigate(`/analyze/${r._id}`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && navigate(`/analyze/${r._id}`)}
+              >
                 <div className="dash-resume-card-icon">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -229,14 +375,56 @@ function DashboardPage() {
                   </svg>
                 </div>
                 <div className="dash-resume-card-info">
-                  <h4>{r.name}</h4>
-                  <p>{r.date}</p>
+                  <h4>{r.originalName}</h4>
+                  <p>{new Date(r.uploadedAt).toLocaleDateString()}</p>
                 </div>
-                <span className={`dash-resume-card-status ${r.status}`}>{r.status}</span>
+                <span className="dash-resume-card-action">
+                  Analyze
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </span>
               </div>
             ))
           )}
         </div>
+
+        {/* ── Recent Reports ── */}
+        {reports.length > 0 && (
+          <>
+            <div className="dash-section-header" style={{ marginTop: '2.5rem' }}>
+              <h2>Recent Reports</h2>
+            </div>
+            <div className="dash-report-list">
+              {reports.map((rpt) => (
+                <div
+                  key={rpt._id}
+                  className="dash-report-card"
+                  onClick={() => navigate(`/analyze/${rpt.resumeId?._id || rpt.resumeId}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/analyze/${rpt.resumeId?._id || rpt.resumeId}`)}
+                >
+                  <div className="dash-report-score" style={{ '--score-clr': getScoreColor(rpt.analysis.matchScore) }}>
+                    {rpt.analysis.matchScore}
+                  </div>
+                  <div className="dash-report-card-info">
+                    <h4>{rpt.resumeId?.originalName || 'Resume'}</h4>
+                    <p>{truncate(rpt.jobDescription)}</p>
+                  </div>
+                  <div className="dash-report-meta">
+                    <span className="dash-report-date">
+                      {new Date(rpt.createdAt).toLocaleDateString()}
+                    </span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </main>
     </div>
   );

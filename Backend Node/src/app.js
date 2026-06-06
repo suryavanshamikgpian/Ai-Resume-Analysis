@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const authRouter = require('./routes/auth.routes');
+const resumeRouter = require('./routes/resume.routes');
+const reportRouter = require('./routes/report.routes');
 const cookieParser = require('cookie-parser');
 const app = express();
 
@@ -14,6 +16,9 @@ app.use(cookieParser());
 
 // using all the routes here below
 app.use("/api/auth", authRouter);
+
+app.use("/api/resume", resumeRouter);
+app.use("/api/report", reportRouter);
 
 
 
