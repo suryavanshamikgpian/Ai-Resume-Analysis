@@ -79,9 +79,18 @@ async function analyzeResumeAndJD(resumeText, jobDescription) {
     });
 
     // Bind response_format to enforce JSON output from Groq
-    const jsonLlm = llm.bind({
-        response_format: { type: "json_object" },
-    });
+    const jsonLlm = llm.withStructuredOutput(z.object({
+        matchScore: z.number().min(0).max(100),
+        skillsFound: z.array(z.string()),
+        skillsGap: z.array(z.string()),
+        interviewQuestions: z.array(
+            z.object({
+                question: z.string(),
+                category: z.string(),
+            })
+        ),
+        summary: z.string(),
+    }), { name: "analysis_result" });
 
     const prompt = ChatPromptTemplate.fromTemplate(ANALYSIS_TEMPLATE);
 
@@ -96,9 +105,9 @@ async function analyzeResumeAndJD(resumeText, jobDescription) {
 
     console.log("⚡ LLM response received from Groq via LangChain");
 
-    // ── Step 4: Parse and validate with Zod ──
-    const parsed = JSON.parse(response.content);
-    const validated = AnalysisSchema.parse(parsed);
+    // ── Step 4: Validate with Zod ──
+    // withStructuredOutput already returns a parsed object matching the schema
+    const validated = AnalysisSchema.parse(response);
 
     return validated;
 }
